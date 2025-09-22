@@ -88,46 +88,53 @@ def is_scanned_image_pdf(pdf_bytes: bytes, extracted_text: str) -> bool:
 
 @router.post("/validar-documento")
 async def validar_documento(req: PeticionDoc):
-    t_all = time.perf_counter()
-
-    # 1) decode base64
-    t0 = time.perf_counter()
     try:
-        pdf_bytes = base64.b64decode(req.pdfbase64, validate=True)
-    except Exception:
-        raise HTTPException(status_code=400, detail="El campo 'pdfbase64' no es base64 válido.")
-    if len(pdf_bytes) > MAX_PDF_BYTES:
-        raise HTTPException(status_code=413, detail=f"El PDF excede el tamaño máximo permitido ({MAX_PDF_BYTES} bytes).")
-    log_step("1) decode base64", t0)
+        t_all = time.perf_counter()
 
-    # 2) texto directo con pdfminer
-    try:
-        text = extract_text(io.BytesIO(pdf_bytes))
-    except Exception:
-        text = ""
+        # 1) decode base64
+        t0 = time.perf_counter()
+        try:
+            pdf_bytes = base64.b64decode(req.pdfbase64, validate=True)
+        except Exception:
+            raise HTTPException(status_code=400, detail="El campo 'pdfbase64' no es base64 válido.")
+        if len(pdf_bytes) > MAX_PDF_BYTES:
+            raise HTTPException(status_code=413, detail=f"El PDF excede el tamaño máximo permitido ({MAX_PDF_BYTES} bytes).")
+        log_step("1) decode base64", t0)
 
-    # 3) clave de acceso (opcional)
-    clave, _ = extract_clave_acceso_from_text(text or "")
-    ocr_text = ""
-    if is_scanned_image_pdf(pdf_bytes, text or "") and HAS_EASYOCR:
-        ocr_text = easyocr_text_from_pdf(pdf_bytes)
+        # 2) texto directo con pdfminer
+        try:
+            text = extract_text(io.BytesIO(pdf_bytes))
+        except Exception:
+            text = ""
 
-    fuente_texto = text if text and not is_scanned_image_pdf(pdf_bytes, text) else (ocr_text or text)
+        # 3) clave de acceso (opcional)
+        clave, _ = extract_clave_acceso_from_text(text or "")
+        ocr_text = ""
+        if is_scanned_image_pdf(pdf_bytes, text or "") and HAS_EASYOCR:
+            ocr_text = easyocr_text_from_pdf(pdf_bytes)
 
-    # 4) extraer campos del PDF
-    pdf_fields = extract_invoice_fields_from_text(fuente_texto or "", clave)
-    pdf_fields_b64 = base64.b64encode(json.dumps(pdf_fields, ensure_ascii=False).encode("utf-8")).decode("utf-8")
+        fuente_texto = text if text and not is_scanned_image_pdf(pdf_bytes, text) else (ocr_text or text)
 
-    # 5) análisis de riesgo (sin SRI)
-    riesgo = evaluar_riesgo(pdf_bytes, fuente_texto or "", pdf_fields)
+        # 4) extraer campos del PDF
+        pdf_fields = extract_invoice_fields_from_text(fuente_texto or "", clave)
+        pdf_fields_b64 = base64.b64encode(json.dumps(pdf_fields, ensure_ascii=False).encode("utf-8")).decode("utf-8")
 
-    return JSONResponse(
-        status_code=200,
-        content=safe_serialize_dict({
-            "sri_verificado": False,
-            "mensaje": "Análisis local del documento (sin consulta al SRI).",
-            "riesgo": riesgo,
-            "claveAccesoDetectada": clave,
-            "textoAnalizado": fuente_texto
-        })
-    )
+        # 5) análisis de riesgo (sin SRI)
+        riesgo = evaluar_riesgo(pdf_bytes, fuente_texto or "", pdf_fields)
+
+        return JSONResponse(
+            status_code=200,
+            content=safe_serialize_dict({
+                "sri_verificado": False,
+                "mensaje": "Análisis local del documento (sin consulta al SRI).",
+                "riesgo": riesgo,
+                "claveAccesoDetectada": clave,
+                "textoAnalizado": fuente_texto
+            })
+        )
+    except Exception as e:
+        print(f"Error en validar_documento: {e}")
+        return JSONResponse(
+            status_code=500,
+            content={"error": str(e)}
+        )
